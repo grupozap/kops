@@ -353,7 +353,7 @@ func (b *DockerBuilder) Build(c *fi.ModelBuilderContext) error {
 		return nil
 	}
 
-	// @check: neither flatcar nor containeros need provision docker.service, just the docker daemon options
+	// @check: neither coreos or containeros need provision docker.service, just the docker daemon options
 	switch b.Distribution {
 	case distros.DistributionFlatcar:
 		klog.Infof("Detected Flatcar; won't install Docker")
