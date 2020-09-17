@@ -45,11 +45,11 @@ import (
 	"k8s.io/kops/pkg/model/awsmodel"
 	"k8s.io/kops/pkg/model/components"
 	"k8s.io/kops/pkg/model/components/etcdmanager"
-	"k8s.io/kops/pkg/model/components/kubeapiserver"
 	"k8s.io/kops/pkg/model/domodel"
 	"k8s.io/kops/pkg/model/gcemodel"
 	"k8s.io/kops/pkg/model/openstackmodel"
 	"k8s.io/kops/pkg/model/spotinstmodel"
+	"k8s.io/kops/pkg/model/vspheremodel"
 	"k8s.io/kops/pkg/resources/digitalocean"
 	"k8s.io/kops/pkg/templates"
 	"k8s.io/kops/upup/models"
@@ -68,6 +68,8 @@ import (
 	"k8s.io/kops/upup/pkg/fi/cloudup/openstacktasks"
 	"k8s.io/kops/upup/pkg/fi/cloudup/spotinsttasks"
 	"k8s.io/kops/upup/pkg/fi/cloudup/terraform"
+	"k8s.io/kops/upup/pkg/fi/cloudup/vsphere"
+	"k8s.io/kops/upup/pkg/fi/cloudup/vspheretasks"
 	"k8s.io/kops/upup/pkg/fi/fitasks"
 	"k8s.io/kops/util/pkg/hashing"
 	"k8s.io/kops/util/pkg/vfs"
@@ -84,6 +86,8 @@ var (
 	AlphaAllowDO = featureflag.New("AlphaAllowDO", featureflag.Bool(false))
 	// AlphaAllowGCE is a feature flag that gates GCE support while it is alpha
 	AlphaAllowGCE = featureflag.New("AlphaAllowGCE", featureflag.Bool(false))
+	// AlphaAllowVsphere is a feature flag that gates vsphere support while it is alpha
+	AlphaAllowVsphere = featureflag.New("AlphaAllowVsphere", featureflag.Bool(false))
 	// AlphaAllowALI is a feature flag that gates aliyun support while it is alpha
 	AlphaAllowALI = featureflag.New("AlphaAllowALI", featureflag.Bool(false))
 	// CloudupModels a list of supported models
@@ -170,7 +174,7 @@ func (c *ApplyClusterCmd) Run(ctx context.Context) error {
 
 	channel, err := ChannelForCluster(c.Cluster)
 	if err != nil {
-		klog.Warningf("%v", err)
+		return err
 	}
 	c.channel = channel
 
@@ -493,6 +497,21 @@ func (c *ApplyClusterCmd) Run(ctx context.Context) error {
 			}
 		}
 
+	case kops.CloudProviderVSphere:
+		{
+			if !AlphaAllowVsphere.Enabled() {
+				return fmt.Errorf("vsphere support is currently alpha, and is feature-gated.  export KOPS_FEATURE_FLAGS=AlphaAllowVsphere")
+			}
+
+			vsphereCloud := cloud.(*vsphere.VSphereCloud)
+			// TODO: map region with vCenter cluster, or datacenter, or datastore?
+			region = vsphereCloud.Cluster
+
+			l.AddTypes(map[string]interface{}{
+				"instance": &vspheretasks.VirtualMachine{},
+			})
+		}
+
 	case kops.CloudProviderBareMetal:
 		{
 			if !AlphaAllowBareMetal.Enabled() {
@@ -595,11 +614,6 @@ func (c *ApplyClusterCmd) Run(ctx context.Context) error {
 					KopsModelContext: modelContext,
 					Lifecycle:        &clusterLifecycle,
 				},
-				&kubeapiserver.KubeApiserverBuilder{
-					AssetBuilder:     assetBuilder,
-					KopsModelContext: modelContext,
-					Lifecycle:        &clusterLifecycle,
-				},
 				&etcdmanager.EtcdManagerBuilder{
 					AssetBuilder:     assetBuilder,
 					KopsModelContext: modelContext,
@@ -677,6 +691,9 @@ func (c *ApplyClusterCmd) Run(ctx context.Context) error {
 					&alimodel.ExternalAccessModelBuilder{ALIModelContext: aliModelContext, Lifecycle: &clusterLifecycle},
 				)
 
+			case kops.CloudProviderVSphere:
+				// No special settings (yet!)
+
 			case kops.CloudProviderBareMetal:
 				// No special settings (yet!)
 
@@ -718,32 +735,24 @@ func (c *ApplyClusterCmd) Run(ctx context.Context) error {
 	}
 	switch kops.CloudProviderID(cluster.Spec.CloudProvider) {
 	case kops.CloudProviderAWS:
-		{
-			awsModelContext := &awsmodel.AWSModelContext{
-				KopsModelContext: modelContext,
-			}
+		awsModelContext := &awsmodel.AWSModelContext{
+			KopsModelContext: modelContext,
+		}
 
-			awsModelBuilder := &awsmodel.AutoscalingGroupModelBuilder{
+		if featureflag.Spotinst.Enabled() {
+			l.Builders = append(l.Builders, &spotinstmodel.InstanceGroupModelBuilder{
 				AWSModelContext:   awsModelContext,
 				BootstrapScript:   bootstrapScriptBuilder,
 				Lifecycle:         &clusterLifecycle,
 				SecurityLifecycle: &securityLifecycle,
-			}
-
-			if featureflag.Spotinst.Enabled() {
-				l.Builders = append(l.Builders, &spotinstmodel.InstanceGroupModelBuilder{
-					KopsModelContext:  modelContext,
-					BootstrapScript:   bootstrapScriptBuilder,
-					Lifecycle:         &clusterLifecycle,
-					SecurityLifecycle: &securityLifecycle,
-				})
-
-				if featureflag.SpotinstHybrid.Enabled() {
-					l.Builders = append(l.Builders, awsModelBuilder)
-				}
-			} else {
-				l.Builders = append(l.Builders, awsModelBuilder)
-			}
+			})
+		} else {
+			l.Builders = append(l.Builders, &awsmodel.AutoscalingGroupModelBuilder{
+				AWSModelContext:   awsModelContext,
+				BootstrapScript:   bootstrapScriptBuilder,
+				Lifecycle:         &clusterLifecycle,
+				SecurityLifecycle: &securityLifecycle,
+			})
 		}
 	case kops.CloudProviderDO:
 		doModelContext := &domodel.DOModelContext{
@@ -778,6 +787,19 @@ func (c *ApplyClusterCmd) Run(ctx context.Context) error {
 				ALIModelContext: aliModelContext,
 				BootstrapScript: bootstrapScriptBuilder,
 				Lifecycle:       &clusterLifecycle,
+			})
+		}
+
+	case kops.CloudProviderVSphere:
+		{
+			vsphereModelContext := &vspheremodel.VSphereModelContext{
+				KopsModelContext: modelContext,
+			}
+
+			l.Builders = append(l.Builders, &vspheremodel.AutoscalingGroupModelBuilder{
+				VSphereModelContext: vsphereModelContext,
+				BootstrapScript:     bootstrapScriptBuilder,
+				Lifecycle:           &clusterLifecycle,
 			})
 		}
 
@@ -826,6 +848,8 @@ func (c *ApplyClusterCmd) Run(ctx context.Context) error {
 			target = awsup.NewAWSAPITarget(cloud.(awsup.AWSCloud))
 		case kops.CloudProviderDO:
 			target = do.NewDOAPITarget(cloud.(*digitalocean.Cloud))
+		case kops.CloudProviderVSphere:
+			target = vsphere.NewVSphereAPITarget(cloud.(*vsphere.VSphereCloud))
 		case kops.CloudProviderBareMetal:
 			target = baremetal.NewTarget(cloud.(*baremetal.Cloud))
 		case kops.CloudProviderOpenstack:
@@ -930,7 +954,7 @@ func (c *ApplyClusterCmd) Run(ctx context.Context) error {
 	}
 
 	if shouldPrecreateDNS {
-		if err := precreateDNS(ctx, cluster, cloud); err != nil {
+		if err := precreateDNS(cluster, cloud); err != nil {
 			klog.Warningf("unable to pre-create DNS records - cluster startup may be slower: %v", err)
 		}
 	}
@@ -968,11 +992,6 @@ func (c *ApplyClusterCmd) validateKopsVersion() error {
 	if err != nil {
 		klog.Warningf("unable to parse kops version %q", kopsbase.Version)
 		// Not a hard-error
-		return nil
-	}
-
-	if c.channel == nil {
-		klog.Warning("channel unavailable, skipping version validation")
 		return nil
 	}
 
@@ -1088,11 +1107,6 @@ func (c *ApplyClusterCmd) validateKubernetesVersion() error {
 	// TODO: make util.ParseKubernetesVersion not return a pointer
 	kubernetesVersion := *parsed
 
-	if c.channel == nil {
-		klog.Warning("unable to load channel, skipping kubernetes version recommendation/requirements checks")
-		return nil
-	}
-
 	versionInfo := kops.FindKubernetesVersionSpec(c.channel.Spec.KubernetesVersions, kubernetesVersion)
 	if versionInfo == nil {
 		klog.Warningf("unable to find version information for kubernetes version %q in channel", kubernetesVersion)
@@ -1180,12 +1194,14 @@ func (c *ApplyClusterCmd) AddFileAssets(assetBuilder *assets.AssetBuilder) error
 		c.Assets = append(c.Assets, BuildMirroredAsset(u, hash))
 	}
 
-	cniAsset, cniAssetHash, err := findCNIAssets(c.Cluster, assetBuilder)
-	if err != nil {
-		return err
-	}
+	if usesCNI(c.Cluster) {
+		cniAsset, cniAssetHash, err := findCNIAssets(c.Cluster, assetBuilder)
+		if err != nil {
+			return err
+		}
 
-	c.Assets = append(c.Assets, BuildMirroredAsset(cniAsset, cniAssetHash))
+		c.Assets = append(c.Assets, BuildMirroredAsset(cniAsset, cniAssetHash))
+	}
 
 	if c.Cluster.Spec.Networking.LyftVPC != nil {
 		var hash *hashing.Hash
@@ -1208,6 +1224,19 @@ func (c *ApplyClusterCmd) AddFileAssets(assetBuilder *assets.AssetBuilder) error
 		}
 
 		c.Assets = append(c.Assets, BuildMirroredAsset(u, hash))
+	}
+
+	// TODO figure out if we can only do this for CoreOS only and GCE Container OS
+	// TODO It is very difficult to pre-determine what OS an ami is, and if that OS needs socat
+	// At this time we just copy the socat and conntrack binaries to all distros.
+	// Most distros will have their own socat and conntrack binary.
+	// Container operating systems like CoreOS need to have socat and conntrack added to them.
+	{
+		utilsLocation, hash, err := KopsFileUrl("linux/amd64/utils.tar.gz", assetBuilder)
+		if err != nil {
+			return err
+		}
+		c.Assets = append(c.Assets, BuildMirroredAsset(utilsLocation, hash))
 	}
 
 	asset, err := NodeUpAsset(assetBuilder)
@@ -1340,7 +1369,7 @@ func (c *ApplyClusterCmd) BuildNodeUpConfig(assetBuilder *assets.AssetBuilder, i
 	// `docker load` our images when using a KOPS_BASE_URL, so we
 	// don't need to push/pull from a registry
 	if os.Getenv("KOPS_BASE_URL") != "" && isMaster {
-		for _, name := range []string{"kops-controller", "dns-controller", "kube-apiserver-healthcheck"} {
+		for _, name := range []string{"kops-controller", "dns-controller"} {
 			baseURL, err := url.Parse(os.Getenv("KOPS_BASE_URL"))
 			if err != nil {
 				return nil, err
@@ -1383,24 +1412,6 @@ func (c *ApplyClusterCmd) BuildNodeUpConfig(assetBuilder *assets.AssetBuilder, i
 				config.EtcdManifests = append(config.EtcdManifests, p)
 			}
 		}
-	}
-
-	for _, manifest := range assetBuilder.StaticManifests {
-		match := false
-		for _, r := range manifest.Roles {
-			if r == role {
-				match = true
-			}
-		}
-
-		if !match {
-			continue
-		}
-
-		config.StaticManifests = append(config.StaticManifests, &nodeup.StaticManifest{
-			Key:  manifest.Key,
-			Path: manifest.Path,
-		})
 	}
 
 	config.Images = images
