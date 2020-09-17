@@ -24,6 +24,7 @@ import (
 type Distribution string
 
 var (
+	DistributionJessie       Distribution = "jessie"
 	DistributionDebian9      Distribution = "debian9"
 	DistributionDebian10     Distribution = "buster"
 	DistributionXenial       Distribution = "xenial"
@@ -34,6 +35,7 @@ var (
 	DistributionCentos7      Distribution = "centos7"
 	DistributionRhel8        Distribution = "rhel8"
 	DistributionCentos8      Distribution = "centos8"
+	DistributionCoreOS       Distribution = "coreos"
 	DistributionFlatcar      Distribution = "flatcar"
 	DistributionContainerOS  Distribution = "containeros"
 )
@@ -42,6 +44,8 @@ func (d Distribution) BuildTags() []string {
 	var t []string
 
 	switch d {
+	case DistributionJessie:
+		t = []string{"_jessie"}
 	case DistributionDebian9, DistributionDebian10:
 		t = []string{} // trying to move away from tags
 	case DistributionXenial:
@@ -60,6 +64,8 @@ func (d Distribution) BuildTags() []string {
 		t = []string{"_centos8"}
 	case DistributionRhel8:
 		t = []string{"_rhel8"}
+	case DistributionCoreOS:
+		t = []string{"_coreos"}
 	case DistributionFlatcar:
 		t = []string{"_flatcar"}
 	case DistributionContainerOS:
@@ -84,13 +90,13 @@ func (d Distribution) BuildTags() []string {
 
 func (d Distribution) IsDebianFamily() bool {
 	switch d {
-	case DistributionDebian9, DistributionDebian10:
+	case DistributionJessie, DistributionDebian9, DistributionDebian10:
 		return true
 	case DistributionXenial, DistributionBionic, DistributionFocal:
 		return true
 	case DistributionCentos7, DistributionRhel7, DistributionCentos8, DistributionRhel8, DistributionAmazonLinux2:
 		return false
-	case DistributionFlatcar, DistributionContainerOS:
+	case DistributionCoreOS, DistributionFlatcar, DistributionContainerOS:
 		return false
 	default:
 		klog.Fatalf("unknown distribution: %s", d)
@@ -100,13 +106,13 @@ func (d Distribution) IsDebianFamily() bool {
 
 func (d Distribution) IsUbuntu() bool {
 	switch d {
-	case DistributionDebian9, DistributionDebian10:
+	case DistributionJessie, DistributionDebian9, DistributionDebian10:
 		return false
 	case DistributionXenial, DistributionBionic, DistributionFocal:
 		return true
 	case DistributionCentos7, DistributionRhel7, DistributionCentos8, DistributionRhel8, DistributionAmazonLinux2:
 		return false
-	case DistributionFlatcar, DistributionContainerOS:
+	case DistributionCoreOS, DistributionFlatcar, DistributionContainerOS:
 		return false
 	default:
 		klog.Fatalf("unknown distribution: %s", d)
@@ -118,9 +124,9 @@ func (d Distribution) IsRHELFamily() bool {
 	switch d {
 	case DistributionCentos7, DistributionRhel7, DistributionCentos8, DistributionRhel8, DistributionAmazonLinux2:
 		return true
-	case DistributionXenial, DistributionBionic, DistributionFocal, DistributionDebian9, DistributionDebian10:
+	case DistributionJessie, DistributionXenial, DistributionBionic, DistributionFocal, DistributionDebian9, DistributionDebian10:
 		return false
-	case DistributionFlatcar, DistributionContainerOS:
+	case DistributionCoreOS, DistributionFlatcar, DistributionContainerOS:
 		return false
 	default:
 		klog.Fatalf("unknown distribution: %s", d)
@@ -130,11 +136,11 @@ func (d Distribution) IsRHELFamily() bool {
 
 func (d Distribution) IsSystemd() bool {
 	switch d {
-	case DistributionXenial, DistributionBionic, DistributionFocal, DistributionDebian9, DistributionDebian10:
+	case DistributionJessie, DistributionXenial, DistributionBionic, DistributionFocal, DistributionDebian9, DistributionDebian10:
 		return true
 	case DistributionCentos7, DistributionRhel7, DistributionCentos8, DistributionRhel8, DistributionAmazonLinux2:
 		return true
-	case DistributionFlatcar:
+	case DistributionCoreOS, DistributionFlatcar:
 		return true
 	case DistributionContainerOS:
 		return true
